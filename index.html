@@ -63,6 +63,27 @@
     .checkbox-row input { width: auto; margin: 0; }
     .checkbox-row label { margin: 0; font-weight: normal; font-size: 13px; }
     .hidden { display: none !important; }
+    .tabs { display: flex; gap: 2px; margin: 8px 0 18px; border-bottom: 2px solid var(--border); }
+    .tab-btn { background: transparent; color: var(--muted); padding: 10px 18px; border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 600; font-size: 14px; }
+    .tab-btn:hover:not(.active) { background: rgba(31, 111, 235, 0.05); color: var(--ink); }
+    .tab-btn.active { color: var(--accent-dark); border-bottom-color: var(--accent); background: transparent; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .field-list-item { display: flex; gap: 8px; margin-bottom: 6px; }
+    .field-list-item input { flex: 1; }
+    .field-list-item .remove-btn { background: transparent; color: var(--err); border: 1px solid var(--border); padding: 6px 10px; font-size: 12px; }
+    .add-btn { background: transparent; color: var(--accent-dark); border: 1px dashed var(--border); padding: 6px 12px; font-size: 13px; margin-top: 4px; }
+    .add-btn:hover:not(:disabled) { background: rgba(31, 111, 235, 0.05); border-style: solid; }
+    textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-family: inherit; resize: vertical; min-height: 70px; box-sizing: border-box; }
+    textarea:focus { outline: none; border-color: var(--accent); }
+    .output-preview { border: 1px solid var(--border); border-radius: 6px; padding: 16px; background: #fff; max-height: 400px; overflow-y: auto; margin-bottom: 12px; }
+    .output-preview h2 { font-size: 18px; margin: 0 0 10px; color: var(--ink); }
+    .output-preview h3 { font-size: 15px; margin: 14px 0 6px; color: var(--accent-dark); }
+    .output-preview p { margin: 0 0 8px; font-size: 14px; line-height: 1.5; }
+    .output-preview a { color: var(--accent); }
+    .output-source { width: 100%; min-height: 200px; font-family: "Consolas", "Monaco", monospace; font-size: 12px; }
+    .output-stats { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin: 6px 0 12px; }
+    .output-stats strong { color: var(--ink); }
     .footer-note { text-align: center; font-size: 12px; color: var(--muted); margin-top: 24px; }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .badge.ok { background: #e1f5e5; color: var(--ok); }
@@ -72,10 +93,16 @@
 </head>
 <body>
   <div class="container">
-    <h1>KE - Aparatura elektryczna</h1>
-    <p class="subtitle">Generator opisow produktow (Magento HTML + Meta Title + Meta Description + GMC Plain). Upload CSV, pobierz wersje z nowymi opisami w nowych kolumnach.</p>
+    <h1>KE - Generator opisow AI</h1>
+    <p class="subtitle">Opisy produktow (CSV) oraz opisy kategorii SEO dla sklep.ke.pl.</p>
 
-    <!-- 1. Klucz API -->
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="products" type="button">Produkty (CSV)</button>
+      <button class="tab-btn" data-tab="categories" type="button">Kategorie</button>
+    </div>
+
+    <!-- 1. Klucz API (wspolny dla obu zakladek) -->
     <div class="card">
       <h2>1. Dostawca AI i klucz API</h2>
       <div class="row">
@@ -118,6 +145,8 @@
       </div>
     </div>
 
+    <!-- ============ TAB: PRODUKTY (CSV) ============ -->
+    <div id="tab-products" class="tab-content active">
     <!-- 2. Plik CSV -->
     <div class="card">
       <h2>2. Plik CSV</h2>
@@ -156,11 +185,90 @@
         <div class="log" id="log"></div>
       </div>
     </div>
+    </div> <!-- /tab-products -->
 
-    <p class="footer-note">Lignum Sacrum &middot; Generator opisow &middot; <span id="version">v1.0</span></p>
+    <!-- ============ TAB: KATEGORIE ============ -->
+    <div id="tab-categories" class="tab-content">
+      <div class="card">
+        <h2>2. Dane kategorii</h2>
+        <div class="row">
+          <div>
+            <label for="catName">Nazwa kategorii *</label>
+            <input type="text" id="catName" placeholder="np. Wyłączniki nadprądowe" />
+          </div>
+          <div>
+            <label for="catUrl">URL kategorii *</label>
+            <input type="text" id="catUrl" placeholder="https://sklep.ke.pl/wylaczniki-nadpradowe/" />
+          </div>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <label for="catKeywords">Słowa kluczowe (jedna fraza w linii)</label>
+          <textarea id="catKeywords" placeholder="wyłącznik nadprądowy&#10;bezpiecznik B16&#10;ochrona obwodów"></textarea>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label>Kategoria nadrzędna (linkowanie "w górę", opcjonalnie)</label>
+          <div class="field-list-item">
+            <input type="text" id="catParentName" placeholder="Nazwa (np. Aparatura modułowa)" />
+            <input type="text" id="catParentUrl" placeholder="URL nadrzędnej" />
+          </div>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label>Podkategorie (linkowanie "w dół", opcjonalnie)</label>
+          <div id="catChildrenList"></div>
+          <button class="add-btn" type="button" data-list="catChildrenList">+ Dodaj podkategorię</button>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label>Kategorie siostrzane (linkowanie "w bok", opcjonalnie)</label>
+          <div id="catSiblingsList"></div>
+          <button class="add-btn" type="button" data-list="catSiblingsList">+ Dodaj kategorię siostrzaną</button>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label>Producenci (opcjonalnie - sekcja "Producenci" w opisie)</label>
+          <div id="catProducersList"></div>
+          <button class="add-btn" type="button" data-list="catProducersList">+ Dodaj producenta</button>
+        </div>
+
+        <div style="margin-top: 14px;">
+          <label for="catNotes">Dodatkowe uwagi (opcjonalnie - przekazane do modelu)</label>
+          <textarea id="catNotes" placeholder="np. Skupić się na zastosowaniu w przemyśle. Wspomnieć o normie IEC 60898-1."></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>3. Generowanie opisu</h2>
+        <div class="actions">
+          <button id="catGenBtn" type="button">Generuj opis</button>
+          <button id="catCopyBtn" class="secondary hidden" type="button">Kopiuj HTML</button>
+          <button id="catDownloadBtn" class="secondary hidden" type="button">Pobierz .html</button>
+          <button id="catClearBtn" class="secondary hidden" type="button">Wyczyść</button>
+        </div>
+        <div id="catProgress" class="hidden" style="margin-top: 12px;">
+          <p style="color: var(--muted); font-size: 13px;">Generuje opis... (zwykle 5-30s)</p>
+        </div>
+        <div id="catOutput" class="hidden" style="margin-top: 16px;">
+          <div class="output-stats">
+            <span>Znaki: <strong id="catCharCount">0</strong></span>
+            <span>Slowa: <strong id="catWordCount">0</strong></span>
+            <span>W zakresie 2500-5000? <strong id="catRangeOk">-</strong></span>
+          </div>
+          <label>Podglad</label>
+          <div class="output-preview" id="catPreview"></div>
+          <label>HTML (do skopiowania)</label>
+          <textarea class="output-source" id="catSource" readonly></textarea>
+        </div>
+      </div>
+    </div> <!-- /tab-categories -->
+
+    <p class="footer-note">KE - Generator opisow AI &middot; <span id="version">v2.0</span></p>
   </div>
 
   <script src="prompt.js"></script>
+  <script src="prompt-category.js"></script>
   <script>
     // ============== STATE ==============
     const state = {
@@ -240,6 +348,27 @@
       statErr: document.getElementById('statErr'),
       statSkip: document.getElementById('statSkip'),
       log: document.getElementById('log'),
+      // Categories tab
+      catName: document.getElementById('catName'),
+      catUrl: document.getElementById('catUrl'),
+      catKeywords: document.getElementById('catKeywords'),
+      catParentName: document.getElementById('catParentName'),
+      catParentUrl: document.getElementById('catParentUrl'),
+      catChildrenList: document.getElementById('catChildrenList'),
+      catSiblingsList: document.getElementById('catSiblingsList'),
+      catProducersList: document.getElementById('catProducersList'),
+      catNotes: document.getElementById('catNotes'),
+      catGenBtn: document.getElementById('catGenBtn'),
+      catCopyBtn: document.getElementById('catCopyBtn'),
+      catDownloadBtn: document.getElementById('catDownloadBtn'),
+      catClearBtn: document.getElementById('catClearBtn'),
+      catProgress: document.getElementById('catProgress'),
+      catOutput: document.getElementById('catOutput'),
+      catPreview: document.getElementById('catPreview'),
+      catSource: document.getElementById('catSource'),
+      catCharCount: document.getElementById('catCharCount'),
+      catWordCount: document.getElementById('catWordCount'),
+      catRangeOk: document.getElementById('catRangeOk'),
     };
 
     // ============== INIT ==============
@@ -799,6 +928,175 @@
       btn.textContent = text;
       btn.disabled = true;
       setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1200);
+    }
+
+    // ============== TABS ==============
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.tab;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + target));
+        localStorage.setItem('activeTab', target);
+      });
+    });
+    const savedTab = localStorage.getItem('activeTab');
+    if (savedTab) {
+      const tabBtn = document.querySelector(`.tab-btn[data-tab="${savedTab}"]`);
+      if (tabBtn) tabBtn.click();
+    }
+
+    // ============== CATEGORIES - dynamic list fields ==============
+    function addListItem(listId, name = '', url = '') {
+      const container = document.getElementById(listId);
+      const item = document.createElement('div');
+      item.className = 'field-list-item';
+      item.innerHTML = `
+        <input type="text" placeholder="Nazwa" value="${escapeHtml(name)}" />
+        <input type="text" placeholder="URL" value="${escapeHtml(url)}" />
+        <button class="remove-btn" type="button" title="Usun">x</button>`;
+      item.querySelector('.remove-btn').addEventListener('click', () => item.remove());
+      container.appendChild(item);
+    }
+
+    document.querySelectorAll('.add-btn').forEach(btn => {
+      btn.addEventListener('click', () => addListItem(btn.dataset.list));
+    });
+
+    function collectListItems(listId) {
+      const items = [];
+      document.querySelectorAll(`#${listId} .field-list-item`).forEach(row => {
+        const inputs = row.querySelectorAll('input');
+        const name = inputs[0].value.trim();
+        const url = inputs[1].value.trim();
+        if (name || url) items.push({ name, url });
+      });
+      return items;
+    }
+
+    // ============== CATEGORIES - generate ==============
+    el.catGenBtn.addEventListener('click', generateCategory);
+    el.catCopyBtn.addEventListener('click', copyCategoryHtml);
+    el.catDownloadBtn.addEventListener('click', downloadCategoryHtml);
+    el.catClearBtn.addEventListener('click', clearCategoryOutput);
+
+    async function generateCategory() {
+      const apiKey = el.apiKey.value.trim();
+      if (!apiKey) { alert('Wpisz klucz API w sekcji 1.'); return; }
+      const name = el.catName.value.trim();
+      const url = el.catUrl.value.trim();
+      if (!name) { alert('Podaj nazwę kategorii.'); el.catName.focus(); return; }
+
+      const keywords = el.catKeywords.value
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const parentName = el.catParentName.value.trim();
+      const parentUrl = el.catParentUrl.value.trim();
+      const parent = (parentName || parentUrl) ? { name: parentName, url: parentUrl } : null;
+
+      const data = {
+        name,
+        url,
+        keywords,
+        parent,
+        children: collectListItems('catChildrenList'),
+        siblings: collectListItems('catSiblingsList'),
+        producers: collectListItems('catProducersList'),
+        notes: el.catNotes.value.trim(),
+      };
+
+      const prompt = buildCategoryPrompt(data);
+      const providerName = el.provider.value;
+      const model = el.model.value;
+
+      el.catGenBtn.disabled = true;
+      el.catGenBtn.textContent = 'Generuje...';
+      el.catProgress.classList.remove('hidden');
+      el.catOutput.classList.add('hidden');
+
+      const t0 = Date.now();
+      try {
+        let response;
+        if (providerName === 'anthropic') response = await callClaude(apiKey, model, prompt);
+        else if (providerName === 'deepseek') response = await callDeepSeek(apiKey, model, prompt);
+        else response = await callGemini(apiKey, model, prompt);
+
+        const html = cleanCategoryHtml(response);
+        showCategoryOutput(html, ((Date.now() - t0) / 1000).toFixed(1));
+      } catch (e) {
+        alert('Błąd generowania: ' + e.message);
+      } finally {
+        el.catGenBtn.disabled = false;
+        el.catGenBtn.textContent = 'Generuj opis';
+        el.catProgress.classList.add('hidden');
+      }
+    }
+
+    function cleanCategoryHtml(text) {
+      // Usun ewentualne ```html ... ``` lub ``` ... ```
+      let t = text.trim();
+      t = t.replace(/^```html\s*\n?/i, '').replace(/^```\s*\n?/, '');
+      t = t.replace(/\n?```\s*$/i, '');
+      // Usun ewentualne tagi <html>, <body>
+      t = t.replace(/<\/?(?:html|body|head)[^>]*>/gi, '');
+      return t.trim();
+    }
+
+    function showCategoryOutput(html, seconds) {
+      const chars = html.length;
+      const words = (html.replace(/<[^>]+>/g, ' ').match(/\S+/g) || []).length;
+      const inRange = chars >= 2500 && chars <= 5000;
+      el.catCharCount.textContent = chars;
+      el.catWordCount.textContent = words;
+      el.catRangeOk.textContent = inRange ? `TAK (${seconds}s)` : `NIE (${chars} znakow, ${seconds}s)`;
+      el.catRangeOk.style.color = inRange ? 'var(--ok)' : 'var(--warn)';
+      el.catPreview.innerHTML = html;
+      el.catSource.value = html;
+      el.catOutput.classList.remove('hidden');
+      el.catCopyBtn.classList.remove('hidden');
+      el.catDownloadBtn.classList.remove('hidden');
+      el.catClearBtn.classList.remove('hidden');
+    }
+
+    function copyCategoryHtml() {
+      const text = el.catSource.value;
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(
+        () => flash(el.catCopyBtn, 'Skopiowano'),
+        () => {
+          el.catSource.select();
+          document.execCommand('copy');
+          flash(el.catCopyBtn, 'Skopiowano');
+        }
+      );
+    }
+
+    function downloadCategoryHtml() {
+      const text = el.catSource.value;
+      if (!text) return;
+      const slug = (el.catName.value || 'kategoria').toLowerCase()
+        .replace(/[ąćęłńóśźż]/g, c => ({ą:'a',ć:'c',ę:'e',ł:'l',ń:'n',ó:'o',ś:'s',ź:'z',ż:'z'}[c]))
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'kategoria';
+      const blob = new Blob([text], { type: 'text/html;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
+      a.href = url;
+      a.download = `opis-kategorii-${slug}-${ts}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function clearCategoryOutput() {
+      el.catOutput.classList.add('hidden');
+      el.catCopyBtn.classList.add('hidden');
+      el.catDownloadBtn.classList.add('hidden');
+      el.catClearBtn.classList.add('hidden');
+      el.catPreview.innerHTML = '';
+      el.catSource.value = '';
     }
   </script>
 </body>

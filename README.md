@@ -2,7 +2,12 @@
 
 Webowa aplikacja, która generuje opisy produktów (aparatura modułowa: przyciski, przełączniki, wyłączniki, styczniki) za pomocą **Google Gemini**, **Anthropic Claude** lub **DeepSeek**. Czyta CSV z kolumnami `Nazwa DAX`, `Opis e-commerce`, `Opis e-commerce KE`, `Numer katalogowy`. Dopisuje 4 wyjścia w osobnych kolumnach.
 
-## Co generuje (do osobnych kolumn)
+## Dwie zakładki
+
+- **Produkty (CSV)** — bulk generowanie z pliku CSV
+- **Kategorie** — pojedyncze opisy SEO kategorii (formularz + preview + copy/download)
+
+## Produkty (CSV) - co generuje (do osobnych kolumn)
 
 | Kolumna wyjściowa | Zawartość |
 |---|---|
@@ -61,6 +66,31 @@ Cały prompt znajduje się w [`prompt.js`](./prompt.js) jako stała `PROMPT_MAST
 - **Opcjonalne kolumny (kontekst dla modelu):** `Opis e-commerce`, `Opis e-commerce KE`, `Numer katalogowy`
 - Pozostałe kolumny (PIM ID, DAX ID, LOGO, itd.) zachowywane bez zmian
 - Jeśli kolumny wyjściowe (`Opis e-commerce KE`, `Meta Title`, `Meta Description`, `GMC Plain`) już istnieją — są wypełniane. Jeśli nie — dodawane na końcu.
+
+## Kategorie - co generuje
+
+W zakładce "Kategorie" wypełniasz formularz:
+- **Nazwa kategorii** + URL (wymagane)
+- **Słowa kluczowe** (jedna fraza w linii)
+- **Kategoria nadrzędna** (linkowanie "w górę", opcjonalnie)
+- **Podkategorie** (linkowanie "w dół", lista z "+ Dodaj")
+- **Kategorie siostrzane** (linkowanie "w bok", lista z "+ Dodaj")
+- **Producenci** (sekcja `<h3>Producenci</h3>` w opisie, lista z "+ Dodaj")
+- **Dodatkowe uwagi** (opcjonalna instrukcja dla modelu)
+
+Po kliknięciu **Generuj opis** dostajesz:
+- Podgląd HTML (renderowany)
+- HTML do skopiowania (textarea)
+- Statystyki: znaki / słowa / czy mieści się w 2500-5000 znakach
+- Przyciski: **Kopiuj HTML**, **Pobierz .html**, **Wyczyść**
+
+Struktura wygenerowanego opisu:
+- `<h2>` z nazwą kategorii i głównym keywordem
+- Akapit otwierający (2-3 zdania)
+- `<h3>Zastosowanie i dobór</h3>` (3-5 zdań, parametry techniczne i normy)
+- `<h3>Producenci</h3>` (opcjonalnie - tylko jeśli podano linki)
+- `<h3>Powiązane kategorie</h3>` (opcjonalnie - linkowanie wewnętrzne)
+- `<h3>FAQ</h3>` (3-5 pytań eksperckich)
 
 ## Klucze API
 
