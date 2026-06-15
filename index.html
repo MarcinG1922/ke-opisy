@@ -373,8 +373,12 @@
 
     // ============== INIT ==============
     function applyProvider(providerName) {
-      const cfg = PROVIDERS[providerName];
-      if (!cfg) return;
+      let cfg = PROVIDERS[providerName];
+      if (!cfg) {
+        console.warn('[applyProvider] Nieznany dostawca:', providerName, '- fallback na gemini');
+        cfg = PROVIDERS.gemini;
+        el.provider.value = 'gemini';
+      }
       el.apiKeyLabel.textContent = cfg.keyLabel;
       el.apiKey.placeholder = cfg.keyPlaceholder;
       el.apiKeyHint.innerHTML = cfg.keyHint;
