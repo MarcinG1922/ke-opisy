@@ -171,6 +171,7 @@
       <h2>3. Generowanie</h2>
       <div class="actions">
         <button id="startBtn" disabled type="button">Start</button>
+        <button id="retryBtn" class="hidden" type="button">Ponów błędne</button>
         <button id="cancelBtn" class="danger hidden" type="button">Anuluj</button>
         <button id="downloadBtn" class="secondary hidden" type="button">Pobierz CSV</button>
       </div>
@@ -278,6 +279,7 @@
       cancelled: false,
       results: null,       // rows after processing
       stats: { done: 0, ok: 0, err: 0, skip: 0, total: 0 },
+      failedIndices: [],   // indeksy wierszy ktore skonczyly sie bledem (do ponowienia)
     };
 
     // ============== PROVIDER CONFIG ==============
@@ -338,6 +340,7 @@
       overwriteEmpty: document.getElementById('overwriteEmpty'),
       skipExisting: document.getElementById('skipExisting'),
       startBtn: document.getElementById('startBtn'),
+      retryBtn: document.getElementById('retryBtn'),
       cancelBtn: document.getElementById('cancelBtn'),
       downloadBtn: document.getElementById('downloadBtn'),
       progressArea: document.getElementById('progressArea'),
@@ -438,6 +441,7 @@
     });
 
     el.startBtn.addEventListener('click', startProcessing);
+    el.retryBtn.addEventListener('click', retryFailed);
     el.cancelBtn.addEventListener('click', () => {
       state.cancelled = true;
       log('Anulowanie po biezacym wierszu...', 'warn');
@@ -553,23 +557,31 @@
     }
 
     // ============== PROCESSING ==============
-    async function startProcessing() {
+    function startProcessing() {
+      if (!state.parsed) { alert('Wczytaj najpierw plik CSV.'); return; }
+      // Swiezy przebieg - kopia wierszy, czyszczenie logu i listy bledow
+      state.results = state.parsed.rows.map(r => ({ ...r }));
+      state.failedIndices = [];
+      el.log.innerHTML = '';
+      const allIndices = state.results.map((_, i) => i);
+      runProcessing(allIndices, false);
+    }
+
+    function retryFailed() {
+      if (!state.failedIndices || !state.failedIndices.length) return;
+      if (!state.results) { alert('Najpierw uruchom generowanie.'); return; }
+      runProcessing(state.failedIndices.slice(), true);
+    }
+
+    // Przetwarza podany zbior indeksow wierszy. isRetry=true -> ponowienie tylko blednych.
+    async function runProcessing(indices, isRetry) {
       const apiKey = el.apiKey.value.trim();
       if (!apiKey) { alert('Wpisz klucz API.'); return; }
       if (!state.parsed) { alert('Wczytaj najpierw plik CSV.'); return; }
 
-      const { rows, cols } = state.parsed;
+      const { cols } = state.parsed;
       state.processing = true;
       state.cancelled = false;
-      state.results = rows.map(r => ({ ...r }));
-      state.stats = { done: 0, ok: 0, err: 0, skip: 0, total: rows.length };
-
-      el.startBtn.classList.add('hidden');
-      el.cancelBtn.classList.remove('hidden');
-      el.downloadBtn.classList.add('hidden');
-      el.progressArea.classList.remove('hidden');
-      el.log.innerHTML = '';
-      updateStats();
 
       const providerName = el.provider.value;
       const model = el.model.value;
@@ -578,34 +590,45 @@
       const overwriteEmpty = el.overwriteEmpty.checked;
       const skipExisting = el.skipExisting.checked;
 
-      log(`Start: ${rows.length} produktow, ${providerName} / ${model}, concurrency=${concurrency}, delay=${delayMs}ms`, 'info');
+      const total = indices.length;
+      state.stats = { done: 0, ok: 0, err: 0, skip: 0, total };
+      const failures = [];
+
+      el.startBtn.classList.add('hidden');
+      el.retryBtn.classList.add('hidden');
+      el.cancelBtn.classList.remove('hidden');
+      el.downloadBtn.classList.add('hidden');
+      el.progressArea.classList.remove('hidden');
+      updateStats();
+
+      log(`${isRetry ? 'PONOWIENIE bledow' : 'Start'}: ${total} produktow, ${providerName} / ${model}, concurrency=${concurrency}, delay=${delayMs}ms`, 'info');
       const t0 = Date.now();
 
-      // Worker pool - kolejka indeksow, N workerow pobiera kolejne
-      const total = state.results.length;
-      let nextIdx = 0;
+      // Worker pool - kolejka pozycji w tablicy indices
+      let queuePos = 0;
 
-      async function processOne(i) {
-        const row = state.results[i];
+      async function processOne(rowIdx, ord) {
+        const row = state.results[rowIdx];
         const name = (row[cols.nameKey] || '').trim();
         const currentDesc = cols.descKey ? (row[cols.descKey] || '').trim() : '';
         const currentKeDesc = cols.keDescKey ? (row[cols.keDescKey] || '').trim() : '';
         const catNumber = cols.catKey ? (row[cols.catKey] || '').trim() : '';
         const anyDesc = currentDesc || currentKeDesc;
+        const tag = `[${ord + 1}/${total}]`;
 
         if (!name) {
           state.stats.skip++;
-          log(`[${i + 1}/${total}] (pusta Nazwa DAX - pomijam)`, 'warn');
+          log(`${tag} (pusta Nazwa DAX - pomijam)`, 'warn');
           return;
         }
         if (!anyDesc && !overwriteEmpty) {
           state.stats.skip++;
-          log(`[${i + 1}/${total}] ${truncate(name)} (brak opisu zrodlowego, overwriteEmpty=false - pomijam)`, 'warn');
+          log(`${tag} ${truncate(name)} (brak opisu zrodlowego, overwriteEmpty=false - pomijam)`, 'warn');
           return;
         }
-        if (currentKeDesc && skipExisting) {
+        if (currentKeDesc && skipExisting && !isRetry) {
           state.stats.skip++;
-          log(`[${i + 1}/${total}] ${truncate(name)} (ma juz Opis e-commerce KE, skipExisting=true - pomijam)`, 'warn');
+          log(`${tag} ${truncate(name)} (ma juz Opis e-commerce KE, skipExisting=true - pomijam)`, 'warn');
           return;
         }
 
@@ -622,7 +645,8 @@
           const parts = extractSections(response);
           if (!parts.magento) {
             state.stats.err++;
-            log(`[${i + 1}/${total}] ${truncate(name)} - BLAD: brak sekcji MAGENTO (HTML) w odpowiedzi`, 'err');
+            failures.push(rowIdx);
+            log(`${tag} ${truncate(name)} - BLAD: brak sekcji MAGENTO (HTML) w odpowiedzi`, 'err');
           } else {
             row[cols.outKeMagento] = parts.magento;
             if (parts.metaTitle) row[cols.outMetaTitle] = parts.metaTitle;
@@ -630,52 +654,65 @@
             if (parts.gmc) row[cols.outGmc] = parts.gmc;
             state.stats.ok++;
             const sizes = `M:${parts.magento.length} T:${parts.metaTitle?.length||0} D:${parts.metaDesc?.length||0} G:${parts.gmc?.length||0}`;
-            log(`[${i + 1}/${total}] ${truncate(name)} OK (${sizes})`, 'ok');
+            log(`${tag} ${truncate(name)} OK (${sizes})`, 'ok');
           }
         } catch (e) {
           state.stats.err++;
-          log(`[${i + 1}/${total}] ${truncate(name)} - BLAD: ${e.message}`, 'err');
+          failures.push(rowIdx);
+          log(`${tag} ${truncate(name)} - BLAD: ${e.message}`, 'err');
         }
       }
 
-      async function worker(workerId) {
+      async function worker() {
         while (!state.cancelled) {
-          const i = nextIdx++;
-          if (i >= total) return;
-          await processOne(i);
+          const q = queuePos++;
+          if (q >= total) return;
+          await processOne(indices[q], q);
           state.stats.done++;
           updateStats();
-          if (delayMs > 0 && nextIdx < total && !state.cancelled) {
+          if (delayMs > 0 && queuePos < total && !state.cancelled) {
             await sleep(delayMs);
           }
         }
       }
 
       const workers = [];
-      for (let w = 0; w < concurrency; w++) workers.push(worker(w));
+      for (let w = 0; w < concurrency; w++) workers.push(worker());
       await Promise.all(workers);
 
       const dt = ((Date.now() - t0) / 1000).toFixed(1);
-      const rate = total > 0 ? (state.stats.done / (dt / 60)).toFixed(1) : '0';
-      if (state.cancelled) log(`Anulowane. Przetworzono ${state.stats.done}/${total} w ${dt}s.`, 'warn');
-
+      const rate = total > 0 ? (state.stats.done / (dt / 60 || 1)).toFixed(1) : '0';
+      // Nowa lista bledow. Jesli anulowano, dolacz niezrobione z tego przebiegu.
+      if (state.cancelled) {
+        for (let q = queuePos; q < total; q++) failures.push(indices[q]);
+        log(`Anulowane. Przetworzono ${state.stats.done}/${total} w ${dt}s.`, 'warn');
+      }
+      state.failedIndices = failures;
       state.processing = false;
+
       el.cancelBtn.classList.add('hidden');
       el.startBtn.classList.remove('hidden');
       el.downloadBtn.classList.remove('hidden');
-      log(`Zakonczono w ${dt}s (~${rate} opisow/min). OK: ${state.stats.ok}, bledy: ${state.stats.err}, pominiete: ${state.stats.skip}`, 'info');
+      if (failures.length) {
+        el.retryBtn.classList.remove('hidden');
+        el.retryBtn.textContent = `Ponów błędne (${failures.length})`;
+      }
+      log(`Zakonczono w ${dt}s (~${rate} opisow/min). OK: ${state.stats.ok}, bledy: ${state.stats.err}, pominiete: ${state.stats.skip}` +
+        (failures.length ? `. Kliknij "Ponow bledne (${failures.length})" aby powtorzyc.` : ' - wszystko gotowe!'), failures.length ? 'warn' : 'info');
     }
+
+    // Ile prob laczne (attempt 0..MAX_ATTEMPTS). 5 prob = solidna odpornosc na transienty.
+    const MAX_ATTEMPTS = 4;
 
     // ============== GEMINI API ==============
     async function callGemini(apiKey, model, prompt, attempt = 0) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const genConfig = { temperature: 0.7, topP: 0.95, maxOutputTokens: 8192 };
+      // Gemini 2.5 Flash: wylacz "myslenie" - inaczej potrafi zjesc caly budzet tokenow i zwrocic pusty output
+      if (/^gemini-2\.5-flash/i.test(model)) genConfig.thinkingConfig = { thinkingBudget: 0 };
       const body = {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          topP: 0.95,
-          maxOutputTokens: 4096,
-        }
+        generationConfig: genConfig,
       };
       let resp;
       try {
@@ -685,16 +722,16 @@
           body: JSON.stringify(body),
         });
       } catch (netErr) {
-        if (attempt < 2) {
-          await sleep(1000 * Math.pow(3, attempt));
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(1000 * Math.pow(2, attempt));
           return callGemini(apiKey, model, prompt, attempt + 1);
         }
         throw new Error('Network error: ' + netErr.message);
       }
 
       if (resp.status === 429 || resp.status >= 500) {
-        if (attempt < 2) {
-          const wait = 1000 * Math.pow(3, attempt);
+        if (attempt < MAX_ATTEMPTS) {
+          const wait = 1000 * Math.pow(2, attempt);
           log(`HTTP ${resp.status} - retry za ${wait}ms...`, 'warn');
           await sleep(wait);
           return callGemini(apiKey, model, prompt, attempt + 1);
@@ -711,12 +748,17 @@
 
       const data = await resp.json();
       const candidate = data.candidates && data.candidates[0];
-      if (!candidate) throw new Error('Brak odpowiedzi (candidates pusty)');
-      if (candidate.finishReason && candidate.finishReason !== 'STOP' && candidate.finishReason !== 'MAX_TOKENS') {
-        throw new Error('finishReason=' + candidate.finishReason);
+      const text = candidate ? (candidate.content && candidate.content.parts || []).map(p => p.text || '').join('') : '';
+      if (!text) {
+        // Pusta odpowiedz (200 OK) - czesto transient albo MAX_TOKENS/SAFETY. Ponawiamy.
+        if (attempt < MAX_ATTEMPTS) {
+          const wait = 1000 * Math.pow(2, attempt);
+          await sleep(wait);
+          return callGemini(apiKey, model, prompt, attempt + 1);
+        }
+        const reason = candidate && candidate.finishReason ? ' (finishReason=' + candidate.finishReason + ')' : (candidate ? '' : ' (brak candidates)');
+        throw new Error('Pusta odpowiedz modelu' + reason);
       }
-      const text = (candidate.content && candidate.content.parts || []).map(p => p.text || '').join('');
-      if (!text) throw new Error('Pusta odpowiedz modelu');
       return text;
     }
 
@@ -725,7 +767,7 @@
       const url = 'https://api.anthropic.com/v1/messages';
       const body = {
         model: model,
-        max_tokens: 4096,
+        max_tokens: 8000,
         temperature: 0.7,
         messages: [{ role: 'user', content: prompt }],
       };
@@ -742,16 +784,16 @@
           body: JSON.stringify(body),
         });
       } catch (netErr) {
-        if (attempt < 2) {
-          await sleep(1000 * Math.pow(3, attempt));
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(1000 * Math.pow(2, attempt));
           return callClaude(apiKey, model, prompt, attempt + 1);
         }
         throw new Error('Network error: ' + netErr.message);
       }
 
       if (resp.status === 429 || resp.status === 529 || resp.status >= 500) {
-        if (attempt < 2) {
-          const wait = 1000 * Math.pow(3, attempt);
+        if (attempt < MAX_ATTEMPTS) {
+          const wait = 1000 * Math.pow(2, attempt);
           log(`HTTP ${resp.status} - retry za ${wait}ms...`, 'warn');
           await sleep(wait);
           return callClaude(apiKey, model, prompt, attempt + 1);
@@ -767,11 +809,15 @@
       }
 
       const data = await resp.json();
-      if (data.stop_reason && data.stop_reason !== 'end_turn' && data.stop_reason !== 'max_tokens') {
-        throw new Error('stop_reason=' + data.stop_reason);
-      }
       const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
-      if (!text) throw new Error('Pusta odpowiedz modelu');
+      if (!text) {
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(1000 * Math.pow(2, attempt));
+          return callClaude(apiKey, model, prompt, attempt + 1);
+        }
+        const reason = data.stop_reason ? ' (stop_reason=' + data.stop_reason + ')' : '';
+        throw new Error('Pusta odpowiedz modelu' + reason);
+      }
       return text;
     }
 
@@ -780,7 +826,7 @@
       const url = 'https://api.deepseek.com/chat/completions';
       const body = {
         model: model,
-        max_tokens: 4096,
+        max_tokens: 8000,
         temperature: 0.7,
         messages: [{ role: 'user', content: prompt }],
       };
@@ -795,16 +841,16 @@
           body: JSON.stringify(body),
         });
       } catch (netErr) {
-        if (attempt < 2) {
-          await sleep(1000 * Math.pow(3, attempt));
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(1000 * Math.pow(2, attempt));
           return callDeepSeek(apiKey, model, prompt, attempt + 1);
         }
         throw new Error('Network error: ' + netErr.message);
       }
 
       if (resp.status === 429 || resp.status >= 500) {
-        if (attempt < 2) {
-          const wait = 1000 * Math.pow(3, attempt);
+        if (attempt < MAX_ATTEMPTS) {
+          const wait = 1000 * Math.pow(2, attempt);
           log(`HTTP ${resp.status} - retry za ${wait}ms...`, 'warn');
           await sleep(wait);
           return callDeepSeek(apiKey, model, prompt, attempt + 1);
@@ -822,12 +868,15 @@
 
       const data = await resp.json();
       const choice = data.choices && data.choices[0];
-      if (!choice) throw new Error('Brak odpowiedzi (choices pusty)');
-      if (choice.finish_reason && choice.finish_reason !== 'stop' && choice.finish_reason !== 'length') {
-        throw new Error('finish_reason=' + choice.finish_reason);
+      const text = (choice && choice.message && choice.message.content) || '';
+      if (!text) {
+        if (attempt < MAX_ATTEMPTS) {
+          await sleep(1000 * Math.pow(2, attempt));
+          return callDeepSeek(apiKey, model, prompt, attempt + 1);
+        }
+        const reason = choice && choice.finish_reason ? ' (finish_reason=' + choice.finish_reason + ')' : (choice ? '' : ' (brak choices)');
+        throw new Error('Pusta odpowiedz modelu' + reason);
       }
-      const text = (choice.message && choice.message.content) || '';
-      if (!text) throw new Error('Pusta odpowiedz modelu');
       return text;
     }
 
