@@ -449,6 +449,25 @@
     el.downloadBtn.addEventListener('click', downloadResult);
 
     // ============== FILE HANDLING ==============
+    // Wykrywa separator TYLKO z wiersza naglowka (pierwsza linia).
+    // Wiersze danych zawieraja srednik w opisach (np. "PG 13,5; Mosiadz; ...")
+    // i psuly auto-detekcje. Uzywamy parsera CSV swiadomego cudzyslowow.
+    // Przy niepewnosci domyslnie przecinek ",".
+    function detectDelimiterFromHeader(text) {
+      let firstLine = text;
+      const nl = text.search(/\r\n|\r|\n/);
+      if (nl !== -1) firstLine = text.slice(0, nl);
+      const candidates = [',', ';', '\t', '|'];
+      let best = ',';
+      let bestCount = 1; // start od 1 -> przecinek wygrywa remisy i niepewnosc
+      for (const d of candidates) {
+        const res = Papa.parse(firstLine, { delimiter: d });
+        const fields = (res.data && res.data[0]) || [];
+        if (fields.length > bestCount) { bestCount = fields.length; best = d; }
+      }
+      return best;
+    }
+
     function handleFile(file) {
       state.file = file;
       state.parsed = null;
@@ -457,13 +476,20 @@
       el.fileInfo.classList.remove('hidden');
       el.fileInfo.innerHTML = `Wczytuje plik <strong>${escapeHtml(file.name)}</strong>...`;
 
-      Papa.parse(file, {
-        header: true,
-        delimiter: '',         // pusty = PapaParse auto-wykryje (',', ';', '\t', '|')
-        delimitersToGuess: [';', ',', '\t', '|'],
-        skipEmptyLines: true,
-        encoding: 'UTF-8',
-        complete: (res) => {
+      const reader = new FileReader();
+      reader.onerror = () => {
+        el.fileInfo.innerHTML = `<span style="color: var(--err);">Blad odczytu pliku.</span>`;
+        el.startBtn.disabled = true;
+      };
+      reader.onload = (ev) => {
+        let text = ev.target.result || '';
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // usun BOM (UTF-8 z BOM)
+        const detectedDelimiter = detectDelimiterFromHeader(text);
+        Papa.parse(text, {
+          header: true,
+          delimiter: detectedDelimiter,   // jawnie wykryty z naglowka (nie zgadywany z danych)
+          skipEmptyLines: true,
+          complete: (res) => {
           if (res.errors && res.errors.length) {
             console.warn('Parse warnings:', res.errors);
           }
@@ -478,7 +504,7 @@
             });
             return out;
           });
-          const detectedDelim = res.meta.delimiter || ',';
+          const detectedDelim = detectedDelimiter;
 
           // Tolerancyjne dopasowanie - case-insensitive, trim
           const findCol = (target) => {
@@ -549,11 +575,13 @@
             `<br>Separator: <code>${escapeHtml(delimDisplay)}</code> (zachowany przy zapisie)`;
           el.startBtn.disabled = false;
         },
-        error: (err) => {
-          el.fileInfo.innerHTML = `<span style="color: var(--err);">Blad parsowania: ${escapeHtml(err.message || String(err))}</span>`;
-          el.startBtn.disabled = true;
-        }
-      });
+          error: (err) => {
+            el.fileInfo.innerHTML = `<span style="color: var(--err);">Blad parsowania: ${escapeHtml(err.message || String(err))}</span>`;
+            el.startBtn.disabled = true;
+          }
+        });
+      };
+      reader.readAsText(file, 'UTF-8');
     }
 
     // ============== PROCESSING ==============
